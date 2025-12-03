@@ -37,5 +37,12 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
 
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./tests:/scripts
+    working_dir: /scripts
+    entrypoint: ["tail", "-f", "/dev/null"]
+
 volumes:
   postgres_data:

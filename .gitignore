@@ -50,3 +50,6 @@ temp/
 
 # reading files
 reading_materials/
+
+go.mod
+go.sum
