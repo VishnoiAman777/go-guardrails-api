@@ -222,6 +222,91 @@ func TestAnalyzer_Analyze(t *testing.T) {
 			wantLen: 0,
 			wantErr: true,
 		},
+		{
+			name:    "profanity detection - basic profanity",
+			content: "Go to hell you bastard",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "Profanity Detection",
+					PatternType:  "profanity",
+					PatternValue: "builtin",
+					Enabled:      true,
+					Severity:     "medium",
+					Action:       "block",
+				},
+			},
+			wantLen: 1,
+			wantErr: false,
+		},
+		{
+			name:    "profanity detection - leetspeak",
+			content: "You are such a b4st4rd",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "Profanity Detection",
+					PatternType:  "profanity",
+					PatternValue: "builtin",
+					Enabled:      true,
+					Severity:     "medium",
+					Action:       "block",
+				},
+			},
+			wantLen: 1,
+			wantErr: false,
+		},
+		{
+			name:    "profanity detection - clean content",
+			content: "This is a perfectly clean and professional message",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "Profanity Detection",
+					PatternType:  "profanity",
+					PatternValue: "builtin",
+					Enabled:      true,
+					Severity:     "medium",
+					Action:       "block",
+				},
+			},
+			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name:    "profanity detection - multiple profanities",
+			content: "You damn bastard go to hell",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "Profanity Detection",
+					PatternType:  "profanity",
+					PatternValue: "builtin",
+					Enabled:      true,
+					Severity:     "medium",
+					Action:       "block",
+				},
+			},
+			wantLen: 1,
+			wantErr: false,
+		},
+		{
+			name:    "profanity detection - disabled policy",
+			content: "Go to hell you bastard",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "Profanity Detection",
+					PatternType:  "profanity",
+					PatternValue: "builtin",
+					Enabled:      false, // Disabled
+					Severity:     "medium",
+					Action:       "block",
+				},
+			},
+			wantLen: 0,
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -454,6 +539,66 @@ func TestAnalyzer_matchRegex(t *testing.T) {
 
 			if pattern != tt.wantPattern {
 				t.Errorf("matchRegex() pattern = %v, want %v", pattern, tt.wantPattern)
+			}
+		})
+	}
+}
+
+func TestAnalyzer_matchProfanity(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantMatched bool
+		wantErr     bool
+	}{
+		{
+			name:        "basic profanity",
+			content:     "Go to hell you bastard",
+			wantMatched: true,
+			wantErr:     false,
+		},
+		{
+			name:        "leetspeak profanity",
+			content:     "You are such a b4st4rd",
+			wantMatched: true,
+			wantErr:     false,
+		},
+		{
+			name:        "clean content",
+			content:     "This is a perfectly clean message",
+			wantMatched: false,
+			wantErr:     false,
+		},
+		{
+			name:        "multiple profanities",
+			content:     "You damn bastard go to hell",
+			wantMatched: true,
+			wantErr:     false,
+		},
+		{
+			name:        "mixed case profanity",
+			content:     "Go to HELL you BaStArD",
+			wantMatched: true,
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewAnalyzer()
+			matched, pattern, err := a.matchProfanity(tt.content)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("matchProfanity() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if matched != tt.wantMatched {
+				t.Errorf("matchProfanity() matched = %v, want %v", matched, tt.wantMatched)
+			}
+
+			if matched && pattern == "" {
+				t.Error("matchProfanity() returned matched=true but empty pattern")
 			}
 		})
 	}

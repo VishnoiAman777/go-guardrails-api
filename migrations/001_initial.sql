@@ -40,4 +40,5 @@ INSERT INTO policies (name, description, pattern_type, pattern_value, severity, 
     ('Prompt Injection - System', 'Detects system prompt extraction attempts', 'regex', '(?i)(show|reveal|print|display)\s+(system\s+prompt|instructions)', 'high', 'block'),
     ('PII - Email', 'Detects email addresses', 'regex', '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', 'medium', 'redact'),
     ('Jailbreak - DAN', 'Detects DAN jailbreak attempts', 'keyword', 'DAN', 'high', 'block'),
-    ('Sensitive - API Key', 'Detects potential API keys', 'regex', '(?i)(api[_-]?key|secret[_-]?key)\s*[:=]\s*\S+', 'critical', 'block');
+    ('Sensitive - API Key', 'Detects potential API keys', 'regex', '(?i)(api[_-]?key|secret[_-]?key)\s*[:=]\s*\S+', 'critical', 'block'),
+    ('Profanity Detection', 'Detects profanity and offensive language using go-away library', 'profanity', 'builtin', 'medium', 'block');

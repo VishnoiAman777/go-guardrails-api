@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	goaway "github.com/TwiN/go-away"
 	"github.com/prompt-gateway/pkg/models"
 )
 
@@ -15,12 +16,14 @@ type Analyzer struct {
 	// Cache compiled regex patterns to avoid recompiling
 	patternCache map[string]*regexp.Regexp
 	mu           sync.RWMutex // Protects patternCache
+	profanityDet *goaway.ProfanityDetector
 }
 
 // NewAnalyzer creates a new Analyzer
 func NewAnalyzer() *Analyzer {
 	return &Analyzer{
 		patternCache: make(map[string]*regexp.Regexp),
+		profanityDet: goaway.NewProfanityDetector().WithSanitizeLeetSpeak(true).WithSanitizeSpecialCharacters(true),
 	}
 }
 
@@ -54,7 +57,7 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		go func(p models.Policy) {
 			// Check if content matches this policy
 			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
-			
+
 			if err != nil {
 				resultCh <- policyResult{err: fmt.Errorf("error matching policy %s: %w", p.Name, err)}
 				return
@@ -80,11 +83,11 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 	matches := []models.PolicyMatch{}
 	for i := 0; i < len(enabledPolicies); i++ {
 		result := <-resultCh
-		
+
 		if result.err != nil {
 			return nil, result.err
 		}
-		
+
 		if result.found {
 			matches = append(matches, result.match)
 		}
@@ -103,6 +106,8 @@ func (a *Analyzer) checkPolicyMatch(policy models.Policy, content string) (match
 	case "keyword":
 		isMatch, matchedText := a.matchKeyword(policy.PatternValue, content)
 		return isMatch, matchedText, nil
+	case "profanity":
+		return a.matchProfanity(content)
 	default:
 		return false, "", fmt.Errorf("unknown pattern type: %s", policy.PatternType)
 	}
@@ -114,22 +119,22 @@ func (a *Analyzer) getCompiledPattern(pattern string) (*regexp.Regexp, error) {
 	a.mu.RLock()
 	re, exists := a.patternCache[pattern]
 	a.mu.RUnlock()
-	
+
 	if exists {
 		return re, nil
 	}
-	
+
 	// Pattern not in cache, compile it
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("invalid regex pattern: %w", err)
 	}
-	
+
 	// Store in cache (write lock for exclusive access)
 	a.mu.Lock()
 	a.patternCache[pattern] = re
 	a.mu.Unlock()
-	
+
 	return re, nil
 }
 
@@ -163,6 +168,14 @@ func (a *Analyzer) matchKeyword(keyword, content string) (bool, string) {
 	return false, ""
 }
 
+// matchProfanity checks if content contains profanity using go-away library
+func (a *Analyzer) matchProfanity(content string) (bool, string, error) {
+	if a.profanityDet.IsProfane(content) {
+		return true, "profanity detected", nil
+	}
+	return false, "", nil
+}
+
 // RedactContent redacts matched patterns from content
 // Used when policy action is "redact"
 func (a *Analyzer) RedactContent(content string, matches []models.PolicyMatch, policies []models.Policy) string {
@@ -191,6 +204,9 @@ func (a *Analyzer) RedactContent(content string, matches []models.PolicyMatch, p
 			// Case-insensitive keyword replacement
 			re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(policy.PatternValue))
 			redacted = re.ReplaceAllString(redacted, "[REDACTED]")
+		} else if policy.PatternType == "profanity" {
+			// Censor profanity using go-away
+			redacted = a.profanityDet.Censor(redacted)
 		}
 	}
 
