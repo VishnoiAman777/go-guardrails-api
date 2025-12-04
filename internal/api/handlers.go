@@ -108,9 +108,9 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	// Calculate latency
 	latencyMs := time.Since(startTime).Milliseconds()
 
-	// Generate request ID for tracking
-	requestID := uuid.New()
-
+	// Get request ID from context (created in middleware)
+	requestIDStr, _ := r.Context().Value(requestIDKey).(string)
+	requestID, _ := uuid.Parse(requestIDStr)
 	// Create response
 	response := models.AnalyzeResponse{
 		RequestID:         requestID,

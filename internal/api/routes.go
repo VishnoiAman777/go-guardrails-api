@@ -1,11 +1,20 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+// ctxKey is a custom type for context keys to avoid collisions
+type ctxKey string
+
+// Context keys
+const (
+    requestIDKey ctxKey = "request_id"
 )
 
 // SetupRoutes configures all HTTP routes
@@ -51,6 +60,9 @@ func withMiddleware(handler http.HandlerFunc, allowedMethods ...string) http.Han
 		requestID := uuid.New().String()
 		w.Header().Set("X-Request-ID", requestID)
 
+		// Store request ID in context so handlers can access it
+		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+		r = r.WithContext(ctx)
 		// Add CORS headers (for browser-based clients)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
