@@ -22,7 +22,8 @@ export const options = {
   },
 };
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+// Use host.docker.internal when running k6 from Docker to access host machine
+const BASE_URL = __ENV.BASE_URL || 'http://host.docker.internal:8080';
 
 // Sample prompts with varying risk levels
 const prompts = [
