@@ -5,23 +5,114 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"log"
+	"sync"
 
 	"github.com/lib/pq"
 	"github.com/prompt-gateway/pkg/models"
 )
 
-// Logger handles audit log persistence
+// Logger handles audit log persistence with async background workers
 type Logger struct {
-	db *sql.DB
+	db         *sql.DB
+	logChannel chan models.AuditLog // Buffered channel for async logging
+	stopCh     chan struct{}        // Signal to stop workers
+	wg         sync.WaitGroup       // Wait for workers to finish
+	workers    int                  // Number of background workers
 }
 
-// NewLogger creates a new Logger
+// Config holds logger configuration
+type Config struct {
+	BufferSize int // Size of the buffered channel
+	Workers    int // Number of concurrent workers
+}
+
+// DefaultConfig returns sensible defaults for async logging
+func DefaultConfig() Config {
+	return Config{
+		BufferSize: 5000, // Can queue 5000 log entries
+		Workers:    10,    // 10 concurrent workers processing logs
+	}
+}
+
+// NewLogger creates a new Logger with default config
 func NewLogger(db *sql.DB) *Logger {
-	return &Logger{db: db}
+	return NewLoggerWithConfig(db, DefaultConfig())
 }
 
-// Log records an audit entry to the database
+// NewLoggerWithConfig creates a new Logger with custom config
+func NewLoggerWithConfig(db *sql.DB, config Config) *Logger {
+	logger := &Logger{
+		db:         db,
+		logChannel: make(chan models.AuditLog, config.BufferSize),
+		stopCh:     make(chan struct{}),
+		workers:    config.Workers,
+	}
+	
+	// Start background workers
+	logger.startWorkers()
+	
+	return logger
+}
+
+// startWorkers launches background goroutines to process logs
+func (l *Logger) startWorkers() {
+	for i := 0; i < l.workers; i++ {
+		l.wg.Add(1)
+		go l.worker(i + 1) // Worker IDs start from 1
+	}
+	log.Printf("✓ Started %d audit log workers", l.workers)
+}
+
+// worker is a background goroutine that processes audit log entries
+func (l *Logger) worker(id int) {
+	defer l.wg.Done()
+	
+	log.Printf("Audit worker #%d started", id)
+	
+	for {
+		select {
+		case entry := <-l.logChannel:
+			// Process the log entry
+			if err := l.writeToDatabase(entry); err != nil {
+				log.Printf("Worker #%d failed to write audit log: %v", id, err)
+			}
+			
+		case <-l.stopCh:
+			// Drain remaining logs before stopping
+			log.Printf("Worker #%d draining remaining logs...", id)
+			for {
+				select {
+				case entry := <-l.logChannel:
+					if err := l.writeToDatabase(entry); err != nil {
+						log.Printf("Worker #%d failed to write audit log during shutdown: %v", id, err)
+					}
+				default:
+					log.Printf("Worker #%d stopped", id)
+					return
+				}
+			}
+		}
+	}
+}
+
+// Log sends an audit entry to the background workers (non-blocking)
+// This method returns immediately without waiting for DB write
 func (l *Logger) Log(entry models.AuditLog) error {
+	select {
+	case l.logChannel <- entry:
+		// Successfully queued for background processing
+		return nil
+	default:
+		// Channel is full - this is a backpressure situation
+		// Log synchronously to avoid dropping the audit entry
+		log.Println("⚠️  Audit log buffer full, writing synchronously")
+		return l.writeToDatabase(entry)
+	}
+}
+
+// writeToDatabase performs the actual database write
+func (l *Logger) writeToDatabase(entry models.AuditLog) error {
 	ctx := context.Background()
 
 	query := `
@@ -53,6 +144,21 @@ func (l *Logger) Log(entry models.AuditLog) error {
 		return fmt.Errorf("failed to log audit entry: %w", err)
 	}
 
+	return nil
+}
+
+// Close gracefully shuts down the logger
+// It stops accepting new logs and waits for workers to finish
+func (l *Logger) Close() error {
+	log.Println("Shutting down audit logger...")
+	
+	// Signal workers to stop
+	close(l.stopCh)
+	
+	// Wait for all workers to finish processing
+	l.wg.Wait()
+	
+	log.Println("✓ Audit logger stopped gracefully")
 	return nil
 }
 

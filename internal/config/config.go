@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Port        string
 	DatabaseURL string
+	RedisURL    string
 	LogLevel    string
 }
 
@@ -20,12 +21,16 @@ func Load() (*Config, error) {
 	config := &Config{
 		Port:        getEnv("PORT", "8080"),
 		DatabaseURL: getEnv("DATABASE_URL", ""),
+		RedisURL: getEnv("REDIS_URL", ""),
 		LogLevel:    getEnv("LOG_LEVEL", "debug"),
 	}
 
 	// Validate required fields
 	if config.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	if config.RedisURL == "" {
+		return nil, fmt.Errorf("REDIS_URL is required")
 	}
 
 	return config, nil
