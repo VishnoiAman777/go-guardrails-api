@@ -5,54 +5,91 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/prompt-gateway/pkg/models"
 )
 
 // Analyzer handles prompt/response analysis against policies
 type Analyzer struct {
-	// Cache the regex patterns needed for later
+	// Cache compiled regex patterns to avoid recompiling
+	patternCache map[string]*regexp.Regexp
+	mu           sync.RWMutex // Protects patternCache
 }
 
 // NewAnalyzer creates a new Analyzer
 func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+	return &Analyzer{
+		patternCache: make(map[string]*regexp.Regexp),
+	}
+}
+
+// policyResult holds the result of a single policy check
+type policyResult struct {
+	match models.PolicyMatch
+	err   error
+	found bool
 }
 
 // Analyze checks content against policies and returns matches
-// The (a *Analyzer) part means this is a METHOD on the Analyzer struct (like self in Python)
+// Uses concurrent goroutines to check all policies in parallel
 func (a *Analyzer) Analyze(ctx context.Context, content string, policies []models.Policy) ([]models.PolicyMatch, error) {
-	// Initialize empty list to store matches
-	matches := []models.PolicyMatch{}
-
-	// Loop through each policy
+	// Filter enabled policies first
+	enabledPolicies := make([]models.Policy, 0, len(policies))
 	for _, policy := range policies {
-		// Skip disabled policies (like: if not policy.enabled: continue)
-		if !policy.Enabled {
-			continue
-		}
-
-		// Check if content matches this policy
-		matched, matchedPattern, err := a.checkPolicyMatch(policy, content)
-		
-		// Handle errors
-		if err != nil {
-			return nil, fmt.Errorf("error matching policy %s: %w", policy.Name, err)
-		}
-
-		// If we found a match, add it to our results
-		if matched {
-			match := models.PolicyMatch{
-				PolicyID:       policy.ID,
-				PolicyName:     policy.Name,
-				Severity:       policy.Severity,
-				MatchedPattern: matchedPattern,
-			}
-			matches = append(matches, match) // append() is like list.append() in Python
+		if policy.Enabled {
+			enabledPolicies = append(enabledPolicies, policy)
 		}
 	}
 
-	// Return results and nil error (nil is like None in Python)
+	if len(enabledPolicies) == 0 {
+		return []models.PolicyMatch{}, nil
+	}
+
+	// Create buffered channel to collect results from all goroutines
+	resultCh := make(chan policyResult, len(enabledPolicies))
+
+	// Launch a goroutine for each policy (concurrent checking)
+	for _, policy := range enabledPolicies {
+		go func(p models.Policy) {
+			// Check if content matches this policy
+			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
+			
+			if err != nil {
+				resultCh <- policyResult{err: fmt.Errorf("error matching policy %s: %w", p.Name, err)}
+				return
+			}
+
+			if matched {
+				resultCh <- policyResult{
+					match: models.PolicyMatch{
+						PolicyID:       p.ID,
+						PolicyName:     p.Name,
+						Severity:       p.Severity,
+						MatchedPattern: matchedPattern,
+					},
+					found: true,
+				}
+			} else {
+				resultCh <- policyResult{found: false}
+			}
+		}(policy) // Pass policy as parameter to avoid closure issues
+	}
+
+	// Collect results from all goroutines
+	matches := []models.PolicyMatch{}
+	for i := 0; i < len(enabledPolicies); i++ {
+		result := <-resultCh
+		
+		if result.err != nil {
+			return nil, result.err
+		}
+		
+		if result.found {
+			matches = append(matches, result.match)
+		}
+	}
+
 	return matches, nil
 }
 
@@ -71,12 +108,37 @@ func (a *Analyzer) checkPolicyMatch(policy models.Policy, content string) (match
 	}
 }
 
-// matchRegex checks if content matches a regex pattern
-func (a *Analyzer) matchRegex(pattern, content string) (bool, string, error) {
-	// Compile the pattern fresh each time (Day 1 - simple approach)
+// getCompiledPattern returns a cached compiled regex or compiles and caches it
+func (a *Analyzer) getCompiledPattern(pattern string) (*regexp.Regexp, error) {
+	// Try to read from cache first (read lock allows multiple concurrent readers)
+	a.mu.RLock()
+	re, exists := a.patternCache[pattern]
+	a.mu.RUnlock()
+	
+	if exists {
+		return re, nil
+	}
+	
+	// Pattern not in cache, compile it
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return false, "", fmt.Errorf("invalid regex pattern: %w", err)
+		return nil, fmt.Errorf("invalid regex pattern: %w", err)
+	}
+	
+	// Store in cache (write lock for exclusive access)
+	a.mu.Lock()
+	a.patternCache[pattern] = re
+	a.mu.Unlock()
+	
+	return re, nil
+}
+
+// matchRegex checks if content matches a regex pattern using cached compilation
+func (a *Analyzer) matchRegex(pattern, content string) (bool, string, error) {
+	// Get compiled pattern from cache or compile and cache it
+	re, err := a.getCompiledPattern(pattern)
+	if err != nil {
+		return false, "", err
 	}
 
 	// Find the first match
@@ -121,7 +183,7 @@ func (a *Analyzer) RedactContent(content string, matches []models.PolicyMatch, p
 
 		// Replace matched pattern with [REDACTED]
 		if policy.PatternType == "regex" {
-			re, err := regexp.Compile(policy.PatternValue)
+			re, err := a.getCompiledPattern(policy.PatternValue)
 			if err == nil {
 				redacted = re.ReplaceAllString(redacted, "[REDACTED]")
 			}

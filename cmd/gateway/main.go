@@ -47,8 +47,8 @@ func main() {
 
 	// Configure connection pool
 	// Similar to pool settings in asyncpg/SQLAlchemy
-	db.SetMaxOpenConns(25)                 // Max connections
-	db.SetMaxIdleConns(5)                  // Idle connections
+	db.SetMaxOpenConns(20)                 // Max connections
+	db.SetMaxIdleConns(20)                  // Idle connections
 	db.SetConnMaxLifetime(5 * time.Minute) // Connection lifetime
 
 	// Test database connection
@@ -78,11 +78,15 @@ func main() {
 	policyRepo := policy.NewRepository(db)
 	analyzerSvc := analyzer.NewAnalyzer()
 	
-	// Initialize async audit logger with background workers
-	auditLogger := audit.NewLogger(db)
+	// Initialize async audit logger with config from environment
+	auditConfig := audit.Config{
+		BufferSize: cfg.AuditBufferSize,
+		Workers:    cfg.AuditWorkers,
+	}
+	auditLogger := audit.NewLoggerWithConfig(db, auditConfig)
 	defer auditLogger.Close() // Ensure graceful shutdown
 	
-	log.Println("✓ Services initialized")
+	log.Printf("✓ Services initialized (Audit: %d workers, %d buffer)", cfg.AuditWorkers, cfg.AuditBufferSize)
 
 	// 5. Create HTTP handler with dependencies
 	handler := api.NewHandler(policyRepo, analyzerSvc, auditLogger)

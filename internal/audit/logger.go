@@ -31,7 +31,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		BufferSize: 5000, // Can queue 5000 log entries
-		Workers:    10,    // 10 concurrent workers processing logs
+		Workers:    50,    // 50 concurrent workers processing logs
 	}
 }
 
