@@ -241,40 +241,123 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 
 	log.Printf("🔄 Syncing %d audit logs from Redis to Postgres...", len(logs))
 
-	syncCount := 0
+	// Parse all logs first
+	entries := make([]models.AuditLog, 0, len(logs))
 	failedLogs := make([]string, 0)
 	
 	for _, logData := range logs {
 		var entry models.AuditLog
 		if err := json.Unmarshal([]byte(logData), &entry); err != nil {
 			log.Printf("⚠️  Failed to unmarshal audit log: %v", err)
-			continue // Lost forever - bad JSON
+			continue // Skip bad JSON
 		}
-
-		// Write to Postgres
-		if err := rc.writeAuditLogToPostgres(ctx, entry); err != nil {
-			log.Printf("⚠️  Failed to write audit log to Postgres: %v", err)
-			failedLogs = append(failedLogs, logData)
-			continue
-		}
-		syncCount++
+		entries = append(entries, entry)
 	}
 
-	// Re-push failed logs back to Redis for retry
-	if len(failedLogs) > 0 {
-		for _, logData := range failedLogs {
-			if err := rc.rdb.LPush(ctx, "audit_logs:pending", logData).Err(); err != nil {
-				log.Printf("⚠️  Failed to re-queue audit log: %v", err)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Use bulk COPY for maximum performance
+	if err := rc.bulkWriteAuditLogs(ctx, entries); err != nil {
+		log.Printf("⚠️  Bulk insert failed: %v, falling back to individual inserts", err)
+		
+		// Fallback: individual inserts with retry logic
+		syncCount := 0
+		for i, entry := range entries {
+			if err := rc.writeAuditLogToPostgres(ctx, entry); err != nil {
+				log.Printf("⚠️  Failed to write audit log to Postgres: %v", err)
+				failedLogs = append(failedLogs, logs[i])
+				continue
 			}
+			syncCount++
 		}
-		log.Printf("⚠️  Re-queued %d failed audit logs for retry", len(failedLogs))
+		
+		// Re-push failed logs back to Redis for retry
+		if len(failedLogs) > 0 {
+			for _, logData := range failedLogs {
+				if err := rc.rdb.LPush(ctx, "audit_logs:pending", logData).Err(); err != nil {
+					log.Printf("⚠️  Failed to re-queue audit log: %v", err)
+				}
+			}
+			log.Printf("⚠️  Re-queued %d failed audit logs for retry", len(failedLogs))
+		}
+		
+		log.Printf("✓ Synced %d/%d audit logs to Postgres (fallback mode)", syncCount, len(entries))
+		return nil
 	}
 
-	log.Printf("✓ Synced %d/%d audit logs to Postgres", syncCount, len(logs))
+	log.Printf("✓ Bulk synced %d audit logs to Postgres", len(entries))
 	return nil
 }
 
-// writeAuditLogToPostgres writes a single audit log to Postgres
+// bulkWriteAuditLogs uses PostgreSQL COPY for high-performance bulk inserts
+func (rc *RedisCache) bulkWriteAuditLogs(ctx context.Context, entries []models.AuditLog) error {
+	// Begin transaction
+	tx, err := rc.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() // Rollback if not committed
+
+	// Prepare COPY statement
+	stmt, err := tx.PrepareContext(ctx, pq.CopyIn(
+		"audit_logs",
+		"request_id",
+		"client_id", 
+		"prompt_hash",
+		"response_hash",
+		"policies_triggered",
+		"action_taken",
+		"latency_ms",
+	))
+	if err != nil {
+		return fmt.Errorf("failed to prepare COPY statement: %w", err)
+	}
+	defer stmt.Close()
+
+	// Execute COPY for all entries
+	for _, entry := range entries {
+		// Convert UUID slice to string slice for PostgreSQL array
+		policyIDs := make([]string, len(entry.PoliciesTriggered))
+		for i, id := range entry.PoliciesTriggered {
+			policyIDs[i] = id.String()
+		}
+
+		_, err = stmt.ExecContext(
+			ctx,
+			entry.RequestID,
+			entry.ClientID,
+			entry.PromptHash,
+			entry.ResponseHash,
+			pq.Array(policyIDs),
+			entry.ActionTaken,
+			entry.LatencyMs,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to add row to COPY: %w", err)
+		}
+	}
+
+	// Flush the COPY buffer
+	if _, err := stmt.ExecContext(ctx); err != nil {
+		return fmt.Errorf("failed to flush COPY: %w", err)
+	}
+
+	// Close statement before commit
+	if err := stmt.Close(); err != nil {
+		return fmt.Errorf("failed to close COPY statement: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// writeAuditLogToPostgres writes a single audit log to Postgres (fallback only)
 func (rc *RedisCache) writeAuditLogToPostgres(ctx context.Context, entry models.AuditLog) error {
 	query := `
 		INSERT INTO audit_logs (

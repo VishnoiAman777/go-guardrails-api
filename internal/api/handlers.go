@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -61,7 +62,12 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.redisCache.Get(r.Context())
 	if err != nil {
 		log.Printf("Error getting policies from Redis: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		// Check if request timed out
+		if r.Context().Err() == context.DeadlineExceeded {
+			respondError(w, http.StatusGatewayTimeout, "Request timeout")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		}
 		return
 	}
 
@@ -75,7 +81,12 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	matches, err := h.analyzer.Analyze(r.Context(), contentToAnalyze, policies)
 	if err != nil {
 		log.Printf("Error analyzing content: %v", err)
-		respondError(w, http.StatusInternalServerError, "Analysis failed")
+		// Check if request timed out
+		if r.Context().Err() == context.DeadlineExceeded {
+			respondError(w, http.StatusGatewayTimeout, "Request timeout")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Analysis failed")
+		}
 		return
 	}
 
@@ -158,7 +169,12 @@ func (h *Handler) HandleListPolicies(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.redisCache.Get(r.Context())
 	if err != nil {
 		log.Printf("Error getting policies from Redis: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		// Check if request timed out
+		if r.Context().Err() == context.DeadlineExceeded {
+			respondError(w, http.StatusGatewayTimeout, "Request timeout")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		}
 		return
 	}
 	respondJSON(w, http.StatusOK, policies)
@@ -177,7 +193,12 @@ func (h *Handler) HandleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := h.redisCache.Create(r.Context(), req)
 	if err != nil {
 		log.Printf("Error creating policy: %v", err)
-		respondError(w, http.StatusBadRequest, err.Error())
+		// Check if request timed out
+		if r.Context().Err() == context.DeadlineExceeded {
+			respondError(w, http.StatusGatewayTimeout, "Request timeout")
+		} else {
+			respondError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 
