@@ -10,23 +10,26 @@ import (
 	"github.com/google/uuid"
 	"github.com/prompt-gateway/internal/analyzer"
 	"github.com/prompt-gateway/internal/audit"
+	"github.com/prompt-gateway/internal/cache"
 	"github.com/prompt-gateway/internal/policy"
 	"github.com/prompt-gateway/pkg/models"
 )
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
-	policyRepo *policy.Repository
-	analyzer   *analyzer.Analyzer
-	auditLog   *audit.Logger
+	policyRepo  *policy.Repository
+	policyCache *cache.PolicyCache
+	analyzer    *analyzer.Analyzer
+	auditLog    *audit.Logger
 }
 
 // NewHandler creates a new Handler with all dependencies
-func NewHandler(policyRepo *policy.Repository, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
+func NewHandler(policyRepo *policy.Repository, policyCache *cache.PolicyCache, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
 	return &Handler{
-		policyRepo: policyRepo,
-		analyzer:   analyzer,
-		auditLog:   auditLog,
+		policyRepo:  policyRepo,
+		policyCache: policyCache,
+		analyzer:    analyzer,
+		auditLog:    auditLog,
 	}
 }
 
@@ -55,13 +58,8 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch all active policies from database
-	policies, err := h.policyRepo.List(r.Context())
-	if err != nil {
-		log.Printf("Error fetching policies: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
-		return
-	}
+	// Get policies from in-memory cache (no DB call!)
+	policies := h.policyCache.Get()
 
 	// Combine prompt and response for analysis
 	contentToAnalyze := req.Prompt
@@ -152,13 +150,8 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 // HandleListPolicies returns all active policies
 // GET /v1/policies
 func (h *Handler) HandleListPolicies(w http.ResponseWriter, r *http.Request) {
-	policies, err := h.policyRepo.List(r.Context())
-	if err != nil {
-		log.Printf("Error listing policies: %v", err)
-		respondError(w, http.StatusInternalServerError, "Failed to list policies")
-		return
-	}
-
+	// Get policies from in-memory cache (no DB call!)
+	policies := h.policyCache.Get()
 	respondJSON(w, http.StatusOK, policies)
 }
 
@@ -177,6 +170,12 @@ func (h *Handler) HandleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating policy: %v", err)
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Invalidate cache immediately after creating a new policy
+	if err := h.policyCache.Invalidate(r.Context()); err != nil {
+		log.Printf("⚠️  Failed to invalidate policy cache: %v", err)
+		// Don't fail the request if cache invalidation fails
 	}
 
 	respondJSON(w, http.StatusCreated, policy)

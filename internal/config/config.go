@@ -15,6 +15,8 @@ type Config struct {
 	LogLevel          string
 	AuditBufferSize   int // Audit logger buffer size
 	AuditWorkers      int // Number of audit log workers
+	DBMaxOpenConns    int // Maximum number of open database connections
+	DBMaxIdleConns    int // Maximum number of idle database connections
 }
 
 // Load reads configuration from environment variables
@@ -27,6 +29,8 @@ func Load() (*Config, error) {
 		LogLevel:        getEnv("LOG_LEVEL", "debug"),
 		AuditBufferSize: getEnvAsInt("AUDIT_BUFFER_SIZE", 1000),
 		AuditWorkers:    getEnvAsInt("AUDIT_WORKERS", 5),
+		DBMaxOpenConns:  getEnvAsInt("DB_MAX_OPEN_CONNS", 20),
+		DBMaxIdleConns:  getEnvAsInt("DB_MAX_IDLE_CONNS", 20),
 	}
 
 	// Validate required fields

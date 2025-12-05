@@ -16,6 +16,7 @@ import (
 	"github.com/prompt-gateway/internal/analyzer"
 	"github.com/prompt-gateway/internal/api"
 	"github.com/prompt-gateway/internal/audit"
+	"github.com/prompt-gateway/internal/cache"
 	"github.com/prompt-gateway/internal/config"
 	"github.com/prompt-gateway/internal/policy"
 	"github.com/redis/go-redis/v9" // Redis client (like redis-py in Python)
@@ -47,8 +48,8 @@ func main() {
 
 	// Configure connection pool
 	// Similar to pool settings in asyncpg/SQLAlchemy
-	db.SetMaxOpenConns(20)                 // Max connections
-	db.SetMaxIdleConns(20)                  // Idle connections
+	db.SetMaxOpenConns(cfg.DBMaxOpenConns)  // Max connections from config
+	db.SetMaxIdleConns(cfg.DBMaxIdleConns)  // Idle connections from config
 	db.SetConnMaxLifetime(5 * time.Minute) // Connection lifetime
 
 	// Test database connection
@@ -78,6 +79,13 @@ func main() {
 	policyRepo := policy.NewRepository(db)
 	analyzerSvc := analyzer.NewAnalyzer()
 	
+	// Initialize policy cache with background refresh worker
+	policyCache := cache.NewPolicyCache(policyRepo)
+	if err := policyCache.Start(ctx); err != nil {
+		log.Fatalf("Failed to start policy cache: %v", err)
+	}
+	defer policyCache.Stop() // Ensure graceful shutdown of refresh worker
+	
 	// Initialize async audit logger with config from environment
 	auditConfig := audit.Config{
 		BufferSize: cfg.AuditBufferSize,
@@ -89,7 +97,7 @@ func main() {
 	log.Printf("✓ Services initialized (Audit: %d workers, %d buffer)", cfg.AuditWorkers, cfg.AuditBufferSize)
 
 	// 5. Create HTTP handler with dependencies
-	handler := api.NewHandler(policyRepo, analyzerSvc, auditLogger)
+	handler := api.NewHandler(policyRepo, policyCache, analyzerSvc, auditLogger)
 
 	// 6. Set up routes
 	mux := api.SetupRoutes(handler)

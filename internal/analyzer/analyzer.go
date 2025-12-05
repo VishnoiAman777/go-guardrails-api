@@ -36,24 +36,17 @@ type policyResult struct {
 
 // Analyze checks content against policies and returns matches
 // Uses concurrent goroutines to check all policies in parallel
+// Assumes policies are already filtered (only enabled ones)
 func (a *Analyzer) Analyze(ctx context.Context, content string, policies []models.Policy) ([]models.PolicyMatch, error) {
-	// Filter enabled policies first
-	enabledPolicies := make([]models.Policy, 0, len(policies))
-	for _, policy := range policies {
-		if policy.Enabled {
-			enabledPolicies = append(enabledPolicies, policy)
-		}
-	}
-
-	if len(enabledPolicies) == 0 {
+	if len(policies) == 0 {
 		return []models.PolicyMatch{}, nil
 	}
 
 	// Create buffered channel to collect results from all goroutines
-	resultCh := make(chan policyResult, len(enabledPolicies))
+	resultCh := make(chan policyResult, len(policies))
 
 	// Launch a goroutine for each policy (concurrent checking)
-	for _, policy := range enabledPolicies {
+	for _, policy := range policies {
 		go func(p models.Policy) {
 			// Check if content matches this policy
 			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
@@ -81,7 +74,7 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 
 	// Collect results from all goroutines
 	matches := []models.PolicyMatch{}
-	for i := 0; i < len(enabledPolicies); i++ {
+	for i := 0; i < len(policies); i++ {
 		result := <-resultCh
 
 		if result.err != nil {
