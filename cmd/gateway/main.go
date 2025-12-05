@@ -96,9 +96,10 @@ func main() {
 	// 5. Create HTTP handler with dependencies
 	handler := api.NewHandler(policyRepo, policyCache, analyzerSvc, auditLogger)
 
-	// 6. Set up routes
-	mux := api.SetupRoutes(handler)
-	log.Println("✓ Routes configured")
+	// 6. Set up routes with request timeout
+	requestTimeout := time.Duration(cfg.RequestTimeout) * time.Second
+	mux := api.SetupRoutes(handler, requestTimeout)
+	log.Printf("✓ Routes configured (timeout: %v)", requestTimeout)
 
 	// 7. Create HTTP server
 	server := &http.Server{

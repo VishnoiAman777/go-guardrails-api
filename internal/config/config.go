@@ -15,6 +15,7 @@ type Config struct {
 	AuditWorkers      int // Number of audit log workers
 	DBMaxOpenConns    int // Maximum number of open database connections
 	DBMaxIdleConns    int // Maximum number of idle database connections
+	RequestTimeout    int // Request timeout in seconds
 }
 
 // Load reads configuration from environment variables
@@ -28,6 +29,7 @@ func Load() (*Config, error) {
 		AuditWorkers:    getEnvAsInt("AUDIT_WORKERS", 5),
 		DBMaxOpenConns:  getEnvAsInt("DB_MAX_OPEN_CONNS", 20),
 		DBMaxIdleConns:  getEnvAsInt("DB_MAX_IDLE_CONNS", 20),
+		RequestTimeout:  getEnvAsInt("REQUEST_TIMEOUT", 300), 
 	}
 
 	// Validate required fields

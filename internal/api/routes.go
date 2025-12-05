@@ -19,15 +19,13 @@ const (
 
 // SetupRoutes configures all HTTP routes
 // In Go: We manually register routes with a ServeMux (router)
-func SetupRoutes(handler *Handler) *http.ServeMux {
+func SetupRoutes(handler *Handler, requestTimeout time.Duration) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Register routes
-	//   mux.HandleFunc("/v1/analyze", handler.HandleAnalyze)
-	
-	mux.HandleFunc("/v1/analyze", withMiddleware(handler.HandleAnalyze, "POST"))
-	mux.HandleFunc("/v1/policies", withMiddleware(policiesHandler(handler), "GET", "POST"))
-	mux.HandleFunc("/v1/health", withMiddleware(handler.HandleHealth, "GET"))
+	// Register routes with timeout middleware
+	mux.HandleFunc("/v1/analyze", withMiddleware(handler.HandleAnalyze, requestTimeout, "POST"))
+	mux.HandleFunc("/v1/policies", withMiddleware(policiesHandler(handler), requestTimeout, "GET", "POST"))
+	mux.HandleFunc("/v1/health", withMiddleware(handler.HandleHealth, requestTimeout, "GET"))
 
 	return mux
 }
@@ -47,15 +45,19 @@ func policiesHandler(h *Handler) http.HandlerFunc {
 	}
 }
 
-// withMiddleware wraps a handler with logging and request validation
-func withMiddleware(handler http.HandlerFunc, allowedMethods ...string) http.HandlerFunc {
+// withMiddleware wraps a handler with timeout, logging and request validation
+func withMiddleware(handler http.HandlerFunc, timeout time.Duration, allowedMethods ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Generate request ID for tracing
 		requestID := uuid.New().String()
 		w.Header().Set("X-Request-ID", requestID)
 
+		// Create context with timeout for this request
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		defer cancel() // Ensure context is cancelled to free resources
+
 		// Store request ID in context so handlers can access it
-		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+		ctx = context.WithValue(ctx, requestIDKey, requestID)
 		r = r.WithContext(ctx)
 		// Add CORS headers (for browser-based clients)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -84,13 +86,28 @@ func withMiddleware(handler http.HandlerFunc, allowedMethods ...string) http.Han
 
 		// Log request
 		start := time.Now()
-		log.Printf("[%s] %s %s - Started", requestID, r.Method, r.URL.Path)
+		log.Printf("[%s] %s %s - Started (timeout: %v)", requestID, r.Method, r.URL.Path, timeout)
 
-		// Call the actual handler
-		handler(w, r)
+		// Create a channel to signal handler completion
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			handler(w, r)
+		}()
 
-		// Log completion
-		duration := time.Since(start)
-		log.Printf("[%s] %s %s - Completed in %v", requestID, r.Method, r.URL.Path, duration)
+		// Wait for either handler completion or context timeout
+		select {
+		case <-done:
+			// Handler completed successfully
+			duration := time.Since(start)
+			log.Printf("[%s] %s %s - Completed in %v", requestID, r.Method, r.URL.Path, duration)
+		case <-ctx.Done():
+			// Context cancelled (timeout or client disconnect)
+			duration := time.Since(start)
+			log.Printf("[%s] %s %s - Timeout after %v", requestID, r.Method, r.URL.Path, duration)
+			if ctx.Err() == context.DeadlineExceeded {
+				respondError(w, http.StatusGatewayTimeout, "Request timeout exceeded")
+			}
+		}
 	}
 }
