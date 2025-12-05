@@ -62,6 +62,12 @@ func main() {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
 	}
 	
+	// Configure connection pool for high throughput
+	opt.PoolSize = cfg.RedisPoolSize
+	opt.MinIdleConns = cfg.RedisMinIdle
+	opt.PoolTimeout = time.Duration(cfg.RedisPoolTimeout) * time.Second
+	opt.MaxRetries = cfg.RedisMaxRetries
+	
 	rdb := redis.NewClient(opt)
 	defer rdb.Close()
 
@@ -70,31 +76,33 @@ func main() {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
-	log.Println("✓ Connected to Redis")
+	log.Printf("✓ Connected to Redis (Pool: %d, MinIdle: %d)", cfg.RedisPoolSize, cfg.RedisMinIdle)
 
 	// 4. Initialize dependencies (Dependency Injection)
 	policyRepo := policy.NewRepository(db)
 	analyzerSvc := analyzer.NewAnalyzer()
 	
-	// Initialize policy cache with background refresh worker
-	policyCache := cache.NewPolicyCache(policyRepo)
-	if err := policyCache.Start(ctx); err != nil {
-		log.Fatalf("Failed to start policy cache: %v", err)
+	// Initialize Redis cache with background Postgres sync worker
+	// This will sync both policies AND audit logs from Redis to Postgres
+	syncInterval := time.Duration(cfg.RedisSyncInterval) * time.Second
+	redisCache := cache.NewRedisCache(policyRepo, db, rdb, syncInterval)
+	if err := redisCache.Start(ctx); err != nil {
+		log.Fatalf("Failed to start Redis cache: %v", err)
 	}
-	defer policyCache.Stop() // Ensure graceful shutdown of refresh worker
+	defer redisCache.Stop() // Ensure graceful shutdown and final sync
 	
-	// Initialize async audit logger with config from environment
+	// Initialize async audit logger - writes to Redis, synced by redisCache worker
 	auditConfig := audit.Config{
 		BufferSize: cfg.AuditBufferSize,
 		Workers:    cfg.AuditWorkers,
 	}
-	auditLogger := audit.NewLoggerWithConfig(db, auditConfig)
+	auditLogger := audit.NewLoggerWithConfig(db, rdb, auditConfig)
 	defer auditLogger.Close() // Ensure graceful shutdown
 	
-	log.Printf("✓ Services initialized (Audit: %d workers, %d buffer)", cfg.AuditWorkers, cfg.AuditBufferSize)
+	log.Printf("✓ Services initialized (Audit: %d workers→Redis, %d buffer, Redis→Postgres sync: %v)", cfg.AuditWorkers, cfg.AuditBufferSize, syncInterval)
 
 	// 5. Create HTTP handler with dependencies
-	handler := api.NewHandler(policyRepo, policyCache, analyzerSvc, auditLogger)
+	handler := api.NewHandler(policyRepo, redisCache, analyzerSvc, auditLogger)
 
 	// 6. Set up routes with request timeout
 	requestTimeout := time.Duration(cfg.RequestTimeout) * time.Second

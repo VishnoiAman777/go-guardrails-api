@@ -4,17 +4,26 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/prompt-gateway/pkg/models"
+	"github.com/redis/go-redis/v9"
 )
 
-// Logger handles audit log persistence with async background workers
+const (
+	auditLogsKey = "audit_logs:pending"
+	auditLogTTL  = 30 * time.Minute // Keep audit logs in Redis for 30 min
+)
+
+// Logger handles audit log persistence via Redis with async Postgres sync
 type Logger struct {
 	db         *sql.DB
+	rdb        *redis.Client
 	logChannel chan models.AuditLog // Buffered channel for async logging
 	stopCh     chan struct{}        // Signal to stop workers
 	wg         sync.WaitGroup       // Wait for workers to finish
@@ -36,14 +45,15 @@ func DefaultConfig() Config {
 }
 
 // NewLogger creates a new Logger with default config
-func NewLogger(db *sql.DB) *Logger {
-	return NewLoggerWithConfig(db, DefaultConfig())
+func NewLogger(db *sql.DB, rdb *redis.Client) *Logger {
+	return NewLoggerWithConfig(db, rdb, DefaultConfig())
 }
 
 // NewLoggerWithConfig creates a new Logger with custom config
-func NewLoggerWithConfig(db *sql.DB, config Config) *Logger {
+func NewLoggerWithConfig(db *sql.DB, rdb *redis.Client, config Config) *Logger {
 	logger := &Logger{
 		db:         db,
+		rdb:        rdb,
 		logChannel: make(chan models.AuditLog, config.BufferSize),
 		stopCh:     make(chan struct{}),
 		workers:    config.Workers,
@@ -73,9 +83,13 @@ func (l *Logger) worker(id int) {
 	for {
 		select {
 		case entry := <-l.logChannel:
-			// Process the log entry
-			if err := l.writeToDatabase(entry); err != nil {
-				log.Printf("Worker #%d failed to write audit log: %v", id, err)
+			// Write to Redis instead of Postgres
+			if err := l.writeToRedis(entry); err != nil {
+				log.Printf("Worker #%d failed to write audit log to Redis: %v", id, err)
+				// Fallback: try writing directly to Postgres
+				if err := l.writeToDatabase(entry); err != nil {
+					log.Printf("Worker #%d failed to write audit log to Postgres: %v", id, err)
+				}
 			}
 			
 		case <-l.stopCh:
@@ -84,8 +98,8 @@ func (l *Logger) worker(id int) {
 			for {
 				select {
 				case entry := <-l.logChannel:
-					if err := l.writeToDatabase(entry); err != nil {
-						log.Printf("Worker #%d failed to write audit log during shutdown: %v", id, err)
+					if err := l.writeToRedis(entry); err != nil {
+						log.Printf("Worker #%d failed to write audit log to Redis during shutdown: %v", id, err)
 					}
 				default:
 					log.Printf("Worker #%d stopped", id)
@@ -97,7 +111,7 @@ func (l *Logger) worker(id int) {
 }
 
 // Log sends an audit entry to the background workers (non-blocking)
-// This method returns immediately without waiting for DB write
+// This method returns immediately without waiting for Redis write
 func (l *Logger) Log(entry models.AuditLog) error {
 	select {
 	case l.logChannel <- entry:
@@ -105,10 +119,31 @@ func (l *Logger) Log(entry models.AuditLog) error {
 		return nil
 	default:
 		// Channel is full - this is a backpressure situation
-		// Log synchronously to avoid dropping the audit entry
-		log.Println("⚠️  Audit log buffer full, writing synchronously")
-		return l.writeToDatabase(entry)
+		// Write synchronously to Redis to avoid dropping the audit entry
+		log.Println("⚠️  Audit log buffer full, writing synchronously to Redis")
+		return l.writeToRedis(entry)
 	}
+}
+
+// writeToRedis writes audit log to Redis list (will be synced to Postgres later)
+func (l *Logger) writeToRedis(entry models.AuditLog) error {
+	ctx := context.Background()
+
+	// Serialize audit log to JSON
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal audit log: %w", err)
+	}
+
+	// Push to Redis list (LPUSH for efficient batching)
+	if err := l.rdb.LPush(ctx, auditLogsKey, data).Err(); err != nil {
+		return fmt.Errorf("failed to write audit log to Redis: %w", err)
+	}
+
+	// Set TTL on the list to prevent infinite growth
+	l.rdb.Expire(ctx, auditLogsKey, auditLogTTL)
+
+	return nil
 }
 
 // writeToDatabase performs the actual database write

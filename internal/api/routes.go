@@ -88,26 +88,17 @@ func withMiddleware(handler http.HandlerFunc, timeout time.Duration, allowedMeth
 		start := time.Now()
 		log.Printf("[%s] %s %s - Started (timeout: %v)", requestID, r.Method, r.URL.Path, timeout)
 
-		// Create a channel to signal handler completion
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			handler(w, r)
-		}()
+		// Execute handler - context timeout is already set and will be enforced
+		// within handler operations (Redis, DB, etc.) that respect context
+		handler(w, r)
 
-		// Wait for either handler completion or context timeout
-		select {
-		case <-done:
-			// Handler completed successfully
-			duration := time.Since(start)
-			log.Printf("[%s] %s %s - Completed in %v", requestID, r.Method, r.URL.Path, duration)
-		case <-ctx.Done():
-			// Context cancelled (timeout or client disconnect)
+		// Check if context timed out after handler completes
+		if ctx.Err() == context.DeadlineExceeded {
 			duration := time.Since(start)
 			log.Printf("[%s] %s %s - Timeout after %v", requestID, r.Method, r.URL.Path, duration)
-			if ctx.Err() == context.DeadlineExceeded {
-				respondError(w, http.StatusGatewayTimeout, "Request timeout exceeded")
-			}
+		} else {
+			duration := time.Since(start)
+			log.Printf("[%s] %s %s - Completed in %v", requestID, r.Method, r.URL.Path, duration)
 		}
 	}
 }

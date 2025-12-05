@@ -18,16 +18,16 @@ import (
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
 	policyRepo  *policy.Repository
-	policyCache *cache.PolicyCache
+	redisCache  *cache.RedisCache
 	analyzer    *analyzer.Analyzer
 	auditLog    *audit.Logger
 }
 
 // NewHandler creates a new Handler with all dependencies
-func NewHandler(policyRepo *policy.Repository, policyCache *cache.PolicyCache, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
+func NewHandler(policyRepo *policy.Repository, redisCache *cache.RedisCache, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
 	return &Handler{
 		policyRepo:  policyRepo,
-		policyCache: policyCache,
+		redisCache:  redisCache,
 		analyzer:    analyzer,
 		auditLog:    auditLog,
 	}
@@ -57,8 +57,13 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get policies from in-memory cache (no DB call!)
-	policies := h.policyCache.Get()
+	// Get policies from Redis cache (no DB call!)
+	policies, err := h.redisCache.Get(r.Context())
+	if err != nil {
+		log.Printf("Error getting policies from Redis: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		return
+	}
 
 	// Combine prompt and response for analysis
 	contentToAnalyze := req.Prompt
@@ -149,8 +154,13 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 // HandleListPolicies returns all active policies
 // GET /v1/policies
 func (h *Handler) HandleListPolicies(w http.ResponseWriter, r *http.Request) {
-	// Get policies from in-memory cache (no DB call!)
-	policies := h.policyCache.Get()
+	// Get policies from Redis cache (no DB call!)
+	policies, err := h.redisCache.Get(r.Context())
+	if err != nil {
+		log.Printf("Error getting policies from Redis: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
+		return
+	}
 	respondJSON(w, http.StatusOK, policies)
 }
 
@@ -163,18 +173,12 @@ func (h *Handler) HandleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create policy in database
-	policy, err := h.policyRepo.Create(r.Context(), req)
+	// Create policy in Redis cache (will be synced to Postgres periodically)
+	policy, err := h.redisCache.Create(r.Context(), req)
 	if err != nil {
 		log.Printf("Error creating policy: %v", err)
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-
-	// Invalidate cache immediately after creating a new policy
-	if err := h.policyCache.Invalidate(r.Context()); err != nil {
-		log.Printf("⚠️  Failed to invalidate policy cache: %v", err)
-		// Don't fail the request if cache invalidation fails
 	}
 
 	respondJSON(w, http.StatusCreated, policy)

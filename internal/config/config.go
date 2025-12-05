@@ -16,20 +16,30 @@ type Config struct {
 	DBMaxOpenConns    int // Maximum number of open database connections
 	DBMaxIdleConns    int // Maximum number of idle database connections
 	RequestTimeout    int // Request timeout in seconds
+	RedisPoolSize     int // Maximum number of Redis connections in pool
+	RedisMinIdle      int // Minimum number of idle Redis connections
+	RedisPoolTimeout  int // Redis pool timeout in seconds
+	RedisMaxRetries   int // Maximum number of retries for Redis commands
+	RedisSyncInterval int // Redis to Postgres sync interval in seconds
 }
 
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
 	config := &Config{
-		Port:            getEnv("PORT", "8080"),
-		DatabaseURL:     getEnv("DATABASE_URL", ""),
-		RedisURL:        getEnv("REDIS_URL", ""),
-		LogLevel:        getEnv("LOG_LEVEL", "debug"),
-		AuditBufferSize: getEnvAsInt("AUDIT_BUFFER_SIZE", 1000),
-		AuditWorkers:    getEnvAsInt("AUDIT_WORKERS", 5),
-		DBMaxOpenConns:  getEnvAsInt("DB_MAX_OPEN_CONNS", 20),
-		DBMaxIdleConns:  getEnvAsInt("DB_MAX_IDLE_CONNS", 20),
-		RequestTimeout:  getEnvAsInt("REQUEST_TIMEOUT", 300), 
+		Port:             getEnv("PORT", "8080"),
+		DatabaseURL:      getEnv("DATABASE_URL", ""),
+		RedisURL:         getEnv("REDIS_URL", ""),
+		LogLevel:         getEnv("LOG_LEVEL", "debug"),
+		AuditBufferSize:  getEnvAsInt("AUDIT_BUFFER_SIZE", 1000),
+		AuditWorkers:     getEnvAsInt("AUDIT_WORKERS", 5),
+		DBMaxOpenConns:   getEnvAsInt("DB_MAX_OPEN_CONNS", 20),
+		DBMaxIdleConns:   getEnvAsInt("DB_MAX_IDLE_CONNS", 20),
+		RequestTimeout:   getEnvAsInt("REQUEST_TIMEOUT", 300),
+		RedisPoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 100),
+		RedisMinIdle:      getEnvAsInt("REDIS_MIN_IDLE", 20),
+		RedisPoolTimeout:  getEnvAsInt("REDIS_POOL_TIMEOUT", 4),
+		RedisMaxRetries:   getEnvAsInt("REDIS_MAX_RETRIES", 3),
+		RedisSyncInterval: getEnvAsInt("REDIS_SYNC_INTERVAL", 120),
 	}
 
 	// Validate required fields
