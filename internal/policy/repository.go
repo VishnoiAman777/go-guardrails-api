@@ -11,18 +11,16 @@ import (
 
 // Repository handles policy data access
 type Repository struct {
-	db *sql.DB // This is like your database session in Python
+	db *sql.DB 
 }
 
 // NewRepository creates a new Repository
-// In Python: def __init__(self, db: Database)
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
 //1.  List returns all enabled policies
 func (r *Repository) List(ctx context.Context) ([]models.Policy, error) {
-	// SQL query - similar to Python but Go requires explicit scanning
 	query := `
 		SELECT id, name, description, pattern_type, pattern_value, 
 		       severity, action, enabled, created_at, updated_at

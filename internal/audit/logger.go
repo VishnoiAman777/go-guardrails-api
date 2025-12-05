@@ -123,7 +123,6 @@ func (l *Logger) writeToDatabase(entry models.AuditLog) error {
 	`
 
 	// Convert UUID slice to PostgreSQL array
-	// In Python: you'd just pass the list directly with asyncpg
 	policyIDs := make([]string, len(entry.PoliciesTriggered))
 	for i, id := range entry.PoliciesTriggered {
 		policyIDs[i] = id.String()

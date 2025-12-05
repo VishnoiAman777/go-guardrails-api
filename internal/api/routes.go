@@ -18,15 +18,11 @@ const (
 )
 
 // SetupRoutes configures all HTTP routes
-// In Python/FastAPI: You'd use @app.get() and @app.post() decorators
 // In Go: We manually register routes with a ServeMux (router)
 func SetupRoutes(handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Register routes
-	// In Python/FastAPI:
-	//   @app.post("/v1/analyze")
-	// In Go:
 	//   mux.HandleFunc("/v1/analyze", handler.HandleAnalyze)
 	
 	mux.HandleFunc("/v1/analyze", withMiddleware(handler.HandleAnalyze, "POST"))
@@ -52,8 +48,6 @@ func policiesHandler(h *Handler) http.HandlerFunc {
 }
 
 // withMiddleware wraps a handler with logging and request validation
-// In Python/FastAPI: You'd use @app.middleware("http") or dependencies
-// In Go: We use the middleware pattern (function that returns a function)
 func withMiddleware(handler http.HandlerFunc, allowedMethods ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Generate request ID for tracing

@@ -39,7 +39,6 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	
 	// Parse JSON request body
-	// In Python: FastAPI does this automatically with Pydantic
 	// In Go: We need to decode manually
 	var req models.AnalyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -6,8 +6,6 @@ import (
 )
 
 // Config holds application configuration
-// In Python/FastAPI: You might use pydantic-settings or python-dotenv
-// In Go: We read from os.Getenv() directly
 type Config struct {
 	Port              string
 	DatabaseURL       string
@@ -20,7 +18,6 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables
-// Similar to: from pydantic import BaseSettings in Python
 func Load() (*Config, error) {
 	config := &Config{
 		Port:            getEnv("PORT", "8080"),

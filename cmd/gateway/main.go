@@ -11,21 +11,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joho/godotenv" // Load .env files (like python-dotenv)
-	_ "github.com/lib/pq"      // PostgreSQL driver (like psycopg2 in Python)
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 	"github.com/prompt-gateway/internal/analyzer"
 	"github.com/prompt-gateway/internal/api"
 	"github.com/prompt-gateway/internal/audit"
 	"github.com/prompt-gateway/internal/cache"
 	"github.com/prompt-gateway/internal/config"
 	"github.com/prompt-gateway/internal/policy"
-	"github.com/redis/go-redis/v9" // Redis client (like redis-py in Python)
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	log.Println("🚀 Starting Prompt Analysis Gateway...")
 
-	// 0. Load .env file (like python-dotenv)
 	// This loads variables from .env into the environment
 	if err := godotenv.Load(); err != nil {
 		log.Println("⚠️  No .env file found, using environment variables")
@@ -39,7 +38,6 @@ func main() {
 	log.Printf("✓ Configuration loaded (Port: %s)", cfg.Port)
 
 	// 2. Connect to PostgreSQL
-	// In Python: asyncpg.create_pool() or databases.Database()
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -59,7 +57,6 @@ func main() {
 	log.Println("✓ Connected to PostgreSQL")
 
 	// 3. Connect to Redis
-	// In Python: redis.from_url() or aioredis.create_redis_pool()
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
