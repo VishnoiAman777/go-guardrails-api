@@ -12,12 +12,12 @@ import (
 
 // PolicyCache provides an in-memory cache for policies with automatic refresh
 type PolicyCache struct {
-	repo           *policy.Repository
-	policies       []models.Policy
-	mu             sync.RWMutex // Protects policies slice
-	refreshTicker  *time.Ticker
-	stopChan       chan struct{}
-	refreshOnce    sync.Once
+	repo          *policy.Repository
+	policies      []models.Policy
+	mu            sync.RWMutex // Protects policies slice
+	refreshTicker *time.Ticker
+	stopChan      chan struct{}
+	refreshOnce   sync.Once
 }
 
 // NewPolicyCache creates a new policy cache

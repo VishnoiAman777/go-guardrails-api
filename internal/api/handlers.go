@@ -19,16 +19,16 @@ import (
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
 	policyRepo  *policy.Repository
-	redisCache  *cache.RedisCache
+	policyCache *cache.PolicyCache
 	analyzer    *analyzer.Analyzer
 	auditLog    *audit.Logger
 }
 
 // NewHandler creates a new Handler with all dependencies
-func NewHandler(policyRepo *policy.Repository, redisCache *cache.RedisCache, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
+func NewHandler(policyRepo *policy.Repository, policyCache *cache.PolicyCache, analyzer *analyzer.Analyzer, auditLog *audit.Logger) *Handler {
 	return &Handler{
 		policyRepo:  policyRepo,
-		redisCache:  redisCache,
+		policyCache: policyCache,
 		analyzer:    analyzer,
 		auditLog:    auditLog,
 	}
@@ -38,7 +38,7 @@ func NewHandler(policyRepo *policy.Repository, redisCache *cache.RedisCache, ana
 // POST /v1/analyze
 func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
-	
+
 	// Parse JSON request body
 	// In Go: We need to decode manually
 	var req models.AnalyzeRequest
@@ -58,18 +58,8 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get policies from Redis cache (no DB call!)
-	policies, err := h.redisCache.Get(r.Context())
-	if err != nil {
-		log.Printf("Error getting policies from Redis: %v", err)
-		// Check if request timed out
-		if r.Context().Err() == context.DeadlineExceeded {
-			respondError(w, http.StatusGatewayTimeout, "Request timeout")
-		} else {
-			respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
-		}
-		return
-	}
+	// Get policies from in-memory cache (background refreshed from Postgres)
+	policies := h.policyCache.Get()
 
 	// Combine prompt and response for analysis
 	contentToAnalyze := req.Prompt
@@ -162,18 +152,8 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 // HandleListPolicies returns all active policies
 // GET /v1/policies
 func (h *Handler) HandleListPolicies(w http.ResponseWriter, r *http.Request) {
-	// Get policies from Redis cache (no DB call!)
-	policies, err := h.redisCache.Get(r.Context())
-	if err != nil {
-		log.Printf("Error getting policies from Redis: %v", err)
-		// Check if request timed out
-		if r.Context().Err() == context.DeadlineExceeded {
-			respondError(w, http.StatusGatewayTimeout, "Request timeout")
-		} else {
-			respondError(w, http.StatusInternalServerError, "Failed to fetch policies")
-		}
-		return
-	}
+	// Get policies from in-memory cache (background refreshed from Postgres)
+	policies := h.policyCache.Get()
 	respondJSON(w, http.StatusOK, policies)
 }
 
@@ -186,8 +166,8 @@ func (h *Handler) HandleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create policy in Redis cache (will be synced to Postgres periodically)
-	policy, err := h.redisCache.Create(r.Context(), req)
+	// Create policy directly in Postgres
+	policy, err := h.policyRepo.Create(r.Context(), req)
 	if err != nil {
 		log.Printf("Error creating policy: %v", err)
 		// Check if request timed out
@@ -197,6 +177,11 @@ func (h *Handler) HandleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, err.Error())
 		}
 		return
+	}
+
+	// Refresh in-memory cache so new policy is available for subsequent requests
+	if err := h.policyCache.Invalidate(r.Context()); err != nil {
+		log.Printf("⚠️  Failed to refresh policy cache: %v", err)
 	}
 
 	respondJSON(w, http.StatusCreated, policy)

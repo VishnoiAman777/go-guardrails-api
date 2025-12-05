@@ -46,8 +46,8 @@ func main() {
 
 	// Configure connection pool
 	// Similar to pool settings in asyncpg/SQLAlchemy
-	db.SetMaxOpenConns(cfg.DBMaxOpenConns)  // Max connections from config
-	db.SetMaxIdleConns(cfg.DBMaxIdleConns)  // Idle connections from config
+	db.SetMaxOpenConns(cfg.DBMaxOpenConns) // Max connections from config
+	db.SetMaxIdleConns(cfg.DBMaxIdleConns) // Idle connections from config
 	db.SetConnMaxLifetime(5 * time.Minute) // Connection lifetime
 
 	// Test database connection
@@ -61,13 +61,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to parse Redis URL: %v", err)
 	}
-	
+
 	// Configure connection pool for high throughput
 	opt.PoolSize = cfg.RedisPoolSize
 	opt.MinIdleConns = cfg.RedisMinIdle
 	opt.PoolTimeout = time.Duration(cfg.RedisPoolTimeout) * time.Second
 	opt.MaxRetries = cfg.RedisMaxRetries
-	
+
 	rdb := redis.NewClient(opt)
 	defer rdb.Close()
 
@@ -80,29 +80,34 @@ func main() {
 
 	// 4. Initialize dependencies (Dependency Injection)
 	policyRepo := policy.NewRepository(db)
+	policyCache := cache.NewPolicyCache(policyRepo)
+	if err := policyCache.Start(ctx); err != nil {
+		log.Fatalf("Failed to start policy cache: %v", err)
+	}
+	defer policyCache.Stop()
+
 	analyzerSvc := analyzer.NewAnalyzer()
-	
-	// Initialize Redis cache with background Postgres sync worker
-	// This will sync both policies AND audit logs from Redis to Postgres
+
+	// Initialize Redis audit sync worker (Redis → Postgres for audit logs)
 	syncInterval := time.Duration(cfg.RedisSyncInterval) * time.Second
-	redisCache := cache.NewRedisCache(policyRepo, db, rdb, syncInterval)
+	redisCache := cache.NewRedisCache(db, rdb, syncInterval)
 	if err := redisCache.Start(ctx); err != nil {
-		log.Fatalf("Failed to start Redis cache: %v", err)
+		log.Fatalf("Failed to start Redis audit sync: %v", err)
 	}
 	defer redisCache.Stop() // Ensure graceful shutdown and final sync
-	
-	// Initialize async audit logger - writes to Redis, synced by redisCache worker
+
+	// Initialize async audit logger - writes to Redis, synced by Redis audit worker
 	auditConfig := audit.Config{
 		BufferSize: cfg.AuditBufferSize,
 		Workers:    cfg.AuditWorkers,
 	}
 	auditLogger := audit.NewLoggerWithConfig(db, rdb, auditConfig)
 	defer auditLogger.Close() // Ensure graceful shutdown
-	
-	log.Printf("✓ Services initialized (Audit: %d workers→Redis, %d buffer, Redis→Postgres sync: %v)", cfg.AuditWorkers, cfg.AuditBufferSize, syncInterval)
+
+	log.Printf("✓ Services initialized (Policy cache: in-memory+Postgres refresh, Audit: %d workers→Redis, %d buffer, Redis→Postgres sync: %v)", cfg.AuditWorkers, cfg.AuditBufferSize, syncInterval)
 
 	// 5. Create HTTP handler with dependencies
-	handler := api.NewHandler(policyRepo, redisCache, analyzerSvc, auditLogger)
+	handler := api.NewHandler(policyRepo, policyCache, analyzerSvc, auditLogger)
 
 	// 6. Set up routes with request timeout
 	requestTimeout := time.Duration(cfg.RequestTimeout) * time.Second
@@ -122,7 +127,7 @@ func main() {
 	// Create channel to listen for OS interrupt signals
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	// Start server in a goroutine so it doesn't block
 	go func() {
 		log.Printf("✓ Server listening on port %s", cfg.Port)
@@ -131,26 +136,25 @@ func main() {
 		log.Println("   GET  http://localhost:" + cfg.Port + "/v1/policies")
 		log.Println("   POST http://localhost:" + cfg.Port + "/v1/policies")
 		log.Println("   GET  http://localhost:" + cfg.Port + "/v1/health")
-		
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
-	
+
 	// Block until we receive a shutdown signal
 	<-quit
 	log.Println("\n🛑 Shutting down server gracefully...")
-	
+
 	// Create a context with timeout for shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// Shutdown the HTTP server gracefully
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
-	
+
 	log.Println("✓ Server stopped")
 	log.Println("✓ All background workers will finish on defer cleanup")
 }
-
