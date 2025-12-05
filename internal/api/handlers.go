@@ -152,11 +152,8 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         time.Now(),
 	}
 
-	// Log audit entry synchronously
-	if err := h.auditLog.Log(auditEntry); err != nil {
-		log.Printf("Failed to log audit entry: %v", err)
-		// Don't fail the request if audit logging fails
-	}
+	// Log audit entry asynchronously (fire-and-forget)
+	h.auditLog.Log(auditEntry)
 
 	// Send JSON response
 	respondJSON(w, http.StatusOK, response)
