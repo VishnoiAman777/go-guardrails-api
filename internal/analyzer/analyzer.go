@@ -42,51 +42,69 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		return []models.PolicyMatch{}, nil
 	}
 
-	// Create buffered channel to collect results from all goroutines
-	resultCh := make(chan policyResult, len(policies))
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	// Launch a goroutine for each policy (concurrent checking)
+	resultCh := make(chan policyResult, len(policies))
+	var wg sync.WaitGroup
+	wg.Add(len(policies))
+
 	for _, policy := range policies {
 		go func(p models.Policy) {
-			// Check if content matches this policy
-			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
+			defer wg.Done()
 
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
 			if err != nil {
-				resultCh <- policyResult{err: fmt.Errorf("error matching policy %s: %w", p.Name, err)}
+				select {
+				case resultCh <- policyResult{err: fmt.Errorf("error matching policy %s: %w", p.Name, err)}:
+				case <-ctx.Done():
+				}
 				return
 			}
 
-			if matched {
-				resultCh <- policyResult{
-					match: models.PolicyMatch{
-						PolicyID:       p.ID,
-						PolicyName:     p.Name,
-						Severity:       p.Severity,
-						MatchedPattern: matchedPattern,
-					},
-					found: true,
-				}
-			} else {
-				resultCh <- policyResult{found: false}
+			if !matched {
+				return
 			}
-		}(policy) // Pass policy as parameter to avoid closure issues
+
+			select {
+			case resultCh <- policyResult{
+				match: models.PolicyMatch{
+					PolicyID:       p.ID,
+					PolicyName:     p.Name,
+					Severity:       p.Severity,
+					MatchedPattern: matchedPattern,
+				},
+				found: true,
+			}:
+			case <-ctx.Done():
+			}
+		}(policy)
 	}
 
-	// Collect results from all goroutines
-	matches := []models.PolicyMatch{}
-	for i := 0; i < len(policies); i++ {
-		result := <-resultCh
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
 
+	for result := range resultCh {
 		if result.err != nil {
+			cancel()
 			return nil, result.err
 		}
 
 		if result.found {
-			matches = append(matches, result.match)
+			cancel()
+			return []models.PolicyMatch{result.match}, nil
 		}
 	}
 
-	return matches, nil
+	return []models.PolicyMatch{}, nil
 }
 
 // checkPolicyMatch checks if a single policy matches the content
