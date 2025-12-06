@@ -38,9 +38,7 @@ services:
   postgres_exporter:
     image: prometheuscommunity/postgres-exporter:v0.15.0
     environment:
-      DATA_SOURCE_URI: postgresql://postgres:postgres@db:5432/gateway?sslmode=disable
-    ports:
-      - "9187:9187"
+      DATA_SOURCE_NAME: postgres://postgres:postgres@db:5432/gateway?sslmode=disable
     depends_on:
       db:
         condition: service_healthy

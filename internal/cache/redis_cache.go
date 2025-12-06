@@ -55,7 +55,7 @@ func (rc *RedisCache) syncWorker(ctx context.Context) {
 		select {
 		case <-rc.syncTicker.C:
 			if err := rc.syncAuditLogsToPostgres(ctx); err != nil {
-				log.Printf("⚠️  Failed to sync audit logs to Postgres: %v", err)
+				log.Printf(" Failed to sync audit logs to Postgres: %v", err)
 			}
 		case <-rc.stopChan:
 			if rc.syncTicker != nil {
@@ -63,7 +63,7 @@ func (rc *RedisCache) syncWorker(ctx context.Context) {
 			}
 			// Best effort final sync
 			if err := rc.syncAuditLogsToPostgres(ctx); err != nil {
-				log.Printf("⚠️  Failed to perform final audit log sync to Postgres: %v", err)
+				log.Printf("Failed to perform final audit log sync to Postgres: %v", err)
 			}
 			log.Println("✓ Redis→Postgres audit sync worker stopped")
 			return
@@ -82,11 +82,11 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 	// Check queue size before syncing
 	queueSize, err := rc.rdb.LLen(ctx, "audit_logs:pending").Result()
 	if err != nil {
-		log.Printf("⚠️  Failed to get audit log queue size: %v", err)
+		log.Printf(" Failed to get audit log queue size: %v", err)
 	} else {
 		metrics.AuditQueueLength.Set(float64(queueSize))
 		if queueSize > 0 {
-			log.Printf("📊 Audit log queue size: %d logs pending", queueSize)
+			log.Printf(" Audit log queue size: %d logs pending", queueSize)
 		}
 	}
 
@@ -104,7 +104,7 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 		return fmt.Errorf("failed to read audit logs from Redis: %w", err)
 	}
 
-	log.Printf("🔄 Syncing %d audit logs from Redis to Postgres...", len(logs))
+	log.Printf("Syncing %d audit logs from Redis to Postgres...", len(logs))
 	remaining := queueSize - int64(len(logs))
 	if remaining < 0 {
 		remaining = 0
@@ -118,7 +118,7 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 	for _, logData := range logs {
 		var entry models.AuditLog
 		if err := json.Unmarshal([]byte(logData), &entry); err != nil {
-			log.Printf("⚠️  Failed to unmarshal audit log: %v", err)
+			log.Printf("Failed to unmarshal audit log: %v", err)
 			continue // Skip bad JSON
 		}
 		entries = append(entries, entry)
@@ -130,13 +130,13 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 
 	// Use bulk COPY for maximum performance
 	if err := rc.bulkWriteAuditLogs(ctx, entries); err != nil {
-		log.Printf("⚠️  Bulk insert failed: %v, falling back to individual inserts", err)
+		log.Printf("Bulk insert failed: %v, falling back to individual inserts", err)
 
 		// Fallback: individual inserts with retry logic
 		syncCount := 0
 		for i, entry := range entries {
 			if err := rc.writeAuditLogToPostgres(ctx, entry); err != nil {
-				log.Printf("⚠️  Failed to write audit log to Postgres: %v", err)
+				log.Printf("Failed to write audit log to Postgres: %v", err)
 				failedLogs = append(failedLogs, logs[i])
 				continue
 			}
@@ -147,10 +147,10 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 		if len(failedLogs) > 0 {
 			for _, logData := range failedLogs {
 				if err := rc.rdb.LPush(ctx, "audit_logs:pending", logData).Err(); err != nil {
-					log.Printf("⚠️  Failed to re-queue audit log: %v", err)
+					log.Printf("Failed to re-queue audit log: %v", err)
 				}
 			}
-			log.Printf("⚠️  Re-queued %d failed audit logs for retry", len(failedLogs))
+			log.Printf("Re-queued %d failed audit logs for retry", len(failedLogs))
 		}
 
 		log.Printf("✓ Synced %d/%d audit logs to Postgres (fallback mode)", syncCount, len(entries))

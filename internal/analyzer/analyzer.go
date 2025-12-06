@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -17,13 +18,15 @@ type Analyzer struct {
 	patternCache map[string]*regexp.Regexp
 	mu           sync.RWMutex // Protects patternCache
 	profanityDet *goaway.ProfanityDetector
+	modelClient  ModelClient
 }
 
 // NewAnalyzer creates a new Analyzer
-func NewAnalyzer() *Analyzer {
+func NewAnalyzer(modelClient ModelClient) *Analyzer {
 	return &Analyzer{
 		patternCache: make(map[string]*regexp.Regexp),
 		profanityDet: goaway.NewProfanityDetector().WithSanitizeLeetSpeak(true).WithSanitizeSpecialCharacters(true),
+		modelClient:  modelClient,
 	}
 }
 
@@ -47,9 +50,15 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 
 	resultCh := make(chan policyResult, len(policies))
 	var wg sync.WaitGroup
-	wg.Add(len(policies))
+	activePolicies := 0
 
 	for _, policy := range policies {
+		if !policy.Enabled {
+			continue
+		}
+		activePolicies++
+
+		wg.Add(1)
 		go func(p models.Policy) {
 			defer wg.Done()
 
@@ -59,7 +68,7 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 			default:
 			}
 
-			matched, matchedPattern, err := a.checkPolicyMatch(p, content)
+			matched, matchedPattern, err := a.checkPolicyMatch(ctx, p, content)
 			if err != nil {
 				select {
 				case resultCh <- policyResult{err: fmt.Errorf("error matching policy %s: %w", p.Name, err)}:
@@ -87,11 +96,16 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		}(policy)
 	}
 
+	if activePolicies == 0 {
+		return []models.PolicyMatch{}, nil
+	}
+
 	go func() {
 		wg.Wait()
 		close(resultCh)
 	}()
 
+	matches := []models.PolicyMatch{}
 	for result := range resultCh {
 		if result.err != nil {
 			cancel()
@@ -99,17 +113,16 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		}
 
 		if result.found {
-			cancel()
-			return []models.PolicyMatch{result.match}, nil
+			matches = append(matches, result.match)
 		}
 	}
 
-	return []models.PolicyMatch{}, nil
+	return matches, nil
 }
 
 // checkPolicyMatch checks if a single policy matches the content
 // This is a helper method to make the main Analyze function cleaner
-func (a *Analyzer) checkPolicyMatch(policy models.Policy, content string) (matched bool, pattern string, err error) {
+func (a *Analyzer) checkPolicyMatch(ctx context.Context, policy models.Policy, content string) (matched bool, pattern string, err error) {
 	// Check what type of pattern this policy uses
 	switch policy.PatternType {
 	case "regex":
@@ -119,6 +132,8 @@ func (a *Analyzer) checkPolicyMatch(policy models.Policy, content string) (match
 		return isMatch, matchedText, nil
 	case "profanity":
 		return a.matchProfanity(content)
+	case "model":
+		return a.matchModel(ctx, policy.PatternValue, content)
 	default:
 		return false, "", fmt.Errorf("unknown pattern type: %s", policy.PatternType)
 	}
@@ -184,6 +199,23 @@ func (a *Analyzer) matchProfanity(content string) (bool, string, error) {
 	if a.profanityDet.IsProfane(content) {
 		return true, "profanity detected", nil
 	}
+	return false, "", nil
+}
+
+func (a *Analyzer) matchModel(ctx context.Context, modelIdentifier, content string) (bool, string, error) {
+	if a.modelClient == nil {
+		return false, "", errors.New("model client not configured")
+	}
+
+	evaluation, err := a.modelClient.Evaluate(ctx, modelIdentifier, content)
+	if err != nil {
+		return false, "", err
+	}
+
+	if evaluation.Triggered {
+		return true, evaluation.Detail, nil
+	}
+
 	return false, "", nil
 }
 

@@ -8,6 +8,25 @@ import (
 	"github.com/prompt-gateway/pkg/models"
 )
 
+// fakeModelClient is a mock implementation of ModelClient for testing since it will increase latecy to call actual API is case of test cases so created a mock
+type fakeModelClient struct {
+	responses map[string]ModelEvaluation
+	err       error
+}
+
+func (f *fakeModelClient) Evaluate(ctx context.Context, model string, content string) (ModelEvaluation, error) {
+	if f.err != nil {
+		return ModelEvaluation{}, f.err
+	}
+	if f.responses == nil {
+		return ModelEvaluation{}, nil
+	}
+	if eval, ok := f.responses[model]; ok {
+		return eval, nil
+	}
+	return ModelEvaluation{}, nil
+}
+
 func TestAnalyzer_Analyze(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -15,6 +34,7 @@ func TestAnalyzer_Analyze(t *testing.T) {
 		policies []models.Policy
 		wantLen  int
 		wantErr  bool
+		client   ModelClient
 	}{
 		{
 			name:    "empty content",
@@ -307,11 +327,55 @@ func TestAnalyzer_Analyze(t *testing.T) {
 			wantLen: 0,
 			wantErr: false,
 		},
+		{
+			name:    "model policy flagged unsafe",
+			content: "How to hack into a computer?",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "NeMo Safety",
+					PatternType:  "model",
+					PatternValue: "nvidia/llama-3.1-nemoguard-8b-content-safety",
+					Enabled:      true,
+					Severity:     "high",
+					Action:       "block",
+				},
+			},
+			wantLen: 1,
+			wantErr: false,
+			client: &fakeModelClient{
+				responses: map[string]ModelEvaluation{
+					"nvidia/llama-3.1-nemoguard-8b-content-safety": {Triggered: true, Detail: "User Safety verdict: unsafe"},
+				},
+			},
+		},
+		{
+			name:    "model policy safe content",
+			content: "Hello, how are you today?",
+			policies: []models.Policy{
+				{
+					ID:           uuid.New(),
+					Name:         "NeMo Safety",
+					PatternType:  "model",
+					PatternValue: "nvidia/llama-3.1-nemoguard-8b-content-safety",
+					Enabled:      true,
+					Severity:     "high",
+					Action:       "block",
+				},
+			},
+			wantLen: 0,
+			wantErr: false,
+			client: &fakeModelClient{
+				responses: map[string]ModelEvaluation{
+					"nvidia/llama-3.1-nemoguard-8b-content-safety": {Triggered: false},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAnalyzer()
+			a := NewAnalyzer(tt.client)
 			got, err := a.Analyze(context.Background(), tt.content, tt.policies)
 
 			if (err != nil) != tt.wantErr {
@@ -471,7 +535,7 @@ func TestAnalyzer_RedactContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAnalyzer()
+			a := NewAnalyzer(nil)
 			got := a.RedactContent(tt.content, tt.matches, tt.policies)
 			if got != tt.want {
 				t.Errorf("RedactContent() = %v, want %v", got, tt.want)
@@ -525,7 +589,7 @@ func TestAnalyzer_matchRegex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAnalyzer()
+			a := NewAnalyzer(nil)
 			matched, pattern, err := a.matchRegex(tt.pattern, tt.content)
 
 			if (err != nil) != tt.wantErr {
@@ -585,7 +649,7 @@ func TestAnalyzer_matchProfanity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAnalyzer()
+			a := NewAnalyzer(nil)
 			matched, pattern, err := a.matchProfanity(tt.content)
 
 			if (err != nil) != tt.wantErr {
@@ -651,7 +715,7 @@ func TestAnalyzer_matchKeyword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := NewAnalyzer()
+			a := NewAnalyzer(nil)
 			matched, pattern := a.matchKeyword(tt.keyword, tt.content)
 
 			if matched != tt.wantMatched {

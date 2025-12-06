@@ -11,7 +11,7 @@ import (
 
 // Repository handles policy data access
 type Repository struct {
-	db *sql.DB 
+	db *sql.DB
 }
 
 // NewRepository creates a new Repository
@@ -19,7 +19,7 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-//1.  List returns all enabled policies
+// 1.  List returns all enabled policies
 func (r *Repository) List(ctx context.Context) ([]models.Policy, error) {
 	query := `
 		SELECT id, name, description, pattern_type, pattern_value, 
@@ -33,7 +33,7 @@ func (r *Repository) List(ctx context.Context) ([]models.Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query policies: %w", err)
 	}
-	defer rows.Close() 
+	defer rows.Close()
 
 	var policies []models.Policy
 	for rows.Next() {
@@ -119,8 +119,14 @@ func validateCreateRequest(req models.CreatePolicyRequest) error {
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	if req.PatternType != "regex" && req.PatternType != "keyword" {
-		return fmt.Errorf("pattern_type must be 'regex' or 'keyword'")
+	validPatternTypes := map[string]bool{
+		"regex":     true,
+		"keyword":   true,
+		"profanity": true,
+		"model":     true,
+	}
+	if !validPatternTypes[req.PatternType] {
+		return fmt.Errorf("pattern_type must be one of: regex, keyword, profanity, model")
 	}
 	if req.PatternValue == "" {
 		return fmt.Errorf("pattern_value is required")

@@ -35,10 +35,11 @@ CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
 CREATE INDEX idx_policies_enabled ON policies(enabled) WHERE enabled = true;
 
 -- Seed some sample policies
-INSERT INTO policies (name, description, pattern_type, pattern_value, severity, action) VALUES
-    ('Prompt Injection - Ignore', 'Detects ignore previous instructions pattern', 'regex', '(?i)ignore\s+(previous|above|all)\s+(instructions|prompts)', 'high', 'block'),
-    ('Prompt Injection - System', 'Detects system prompt extraction attempts', 'regex', '(?i)(show|reveal|print|display)\s+(system\s+prompt|instructions)', 'high', 'block'),
-    ('PII - Email', 'Detects email addresses', 'regex', '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', 'medium', 'redact'),
-    ('Jailbreak - DAN', 'Detects DAN jailbreak attempts', 'keyword', 'DAN', 'high', 'block'),
-    ('Sensitive - API Key', 'Detects potential API keys', 'regex', '(?i)(api[_-]?key|secret[_-]?key)\s*[:=]\s*\S+', 'critical', 'block'),
-    ('Profanity Detection', 'Detects profanity and offensive language using go-away library', 'profanity', 'builtin', 'medium', 'block');
+INSERT INTO policies (name, description, pattern_type, pattern_value, severity, action, enabled) VALUES
+    ('Prompt Injection - Ignore', 'Detects ignore previous instructions pattern', 'regex', '(?i)ignore\s+(previous|above|all)\s+(instructions|prompts)', 'high', 'block', true),
+    ('Prompt Injection - System', 'Detects system prompt extraction attempts', 'regex', '(?i)(show|reveal|print|display)\s+(system\s+prompt|instructions)', 'high', 'block', true),
+    ('PII - Email', 'Detects email addresses', 'regex', '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', 'medium', 'redact', true),
+    ('Jailbreak - DAN', 'Detects DAN jailbreak attempts', 'keyword', 'DAN', 'high', 'block', true),
+    ('Sensitive - API Key', 'Detects potential API keys', 'regex', '(?i)(api[_-]?key|secret[_-]?key)\s*[:=]\s*\S+', 'critical', 'block', true),
+    ('Profanity Detection', 'Detects profanity and offensive language using go-away library', 'profanity', 'builtin', 'medium', 'block', true),
+    ('NeMo Safety - User', 'Validates prompts with NVIDIA NeMo Guard content safety model', 'model', 'nvidia/llama-3.1-nemoguard-8b-content-safety', 'high', 'block', true);

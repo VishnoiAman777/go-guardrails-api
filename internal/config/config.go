@@ -19,8 +19,10 @@ type Config struct {
 	RedisPoolSize     int // Maximum number of Redis connections in pool
 	RedisMinIdle      int // Minimum number of idle Redis connections
 	RedisPoolTimeout  int // Redis pool timeout in seconds
-	RedisMaxRetries   int // Maximum number of retries for Redis commands
-	RedisSyncInterval int // Redis to Postgres sync interval in seconds
+	RedisMaxRetries   int    // Maximum number of retries for Redis commands
+	RedisSyncInterval int    // Redis to Postgres sync interval in seconds
+	NemoAPIKey        string // NVIDIA NeMo API Key
+	NemoEndpoint      string // NVIDIA NeMo API Endpoint
 }
 
 // Load reads configuration from environment variables
@@ -40,6 +42,8 @@ func Load() (*Config, error) {
 		RedisPoolTimeout:  getEnvAsInt("REDIS_POOL_TIMEOUT", 4),
 		RedisMaxRetries:   getEnvAsInt("REDIS_MAX_RETRIES", 3),
 		RedisSyncInterval: getEnvAsInt("REDIS_SYNC_INTERVAL", 120),
+		NemoAPIKey:        getEnv("NVIDIA_NEMO_API", ""),
+		NemoEndpoint:      getEnv("NVIDIA_NEMO_ENDPOINT", ""),
 	}
 
 	// Validate required fields
@@ -48,6 +52,9 @@ func Load() (*Config, error) {
 	}
 	if config.RedisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL is required")
+	}
+	if config.NemoAPIKey == "" {
+		return nil, fmt.Errorf("NVIDIA_NEMO_API is required")
 	}
 
 	return config, nil

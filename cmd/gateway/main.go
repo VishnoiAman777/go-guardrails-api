@@ -86,7 +86,8 @@ func main() {
 	}
 	defer policyCache.Stop()
 
-	analyzerSvc := analyzer.NewAnalyzer()
+	nemoClient := analyzer.NewNemoClient(cfg.NemoAPIKey, cfg.NemoEndpoint, nil)
+	analyzerSvc := analyzer.NewAnalyzer(nemoClient)
 
 	// Register Prometheus metrics once during startup
 	metrics.Register()
