@@ -105,7 +105,6 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		close(resultCh)
 	}()
 
-	matches := []models.PolicyMatch{}
 	for result := range resultCh {
 		if result.err != nil {
 			cancel()
@@ -113,11 +112,12 @@ func (a *Analyzer) Analyze(ctx context.Context, content string, policies []model
 		}
 
 		if result.found {
-			matches = append(matches, result.match)
+			cancel()
+			return []models.PolicyMatch{result.match}, nil
 		}
 	}
 
-	return matches, nil
+	return []models.PolicyMatch{}, nil
 }
 
 // checkPolicyMatch checks if a single policy matches the content
