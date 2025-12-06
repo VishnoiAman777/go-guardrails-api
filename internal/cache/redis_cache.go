@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/prompt-gateway/internal/metrics"
 	"github.com/prompt-gateway/pkg/models"
 	"github.com/redis/go-redis/v9"
 )
@@ -82,8 +83,11 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 	queueSize, err := rc.rdb.LLen(ctx, "audit_logs:pending").Result()
 	if err != nil {
 		log.Printf("⚠️  Failed to get audit log queue size: %v", err)
-	} else if queueSize > 0 {
-		log.Printf("📊 Audit log queue size: %d logs pending", queueSize)
+	} else {
+		metrics.AuditQueueLength.Set(float64(queueSize))
+		if queueSize > 0 {
+			log.Printf("📊 Audit log queue size: %d logs pending", queueSize)
+		}
 	}
 
 	// Get batch of audit logs from Redis list (up to 10K at a time)
@@ -93,6 +97,7 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 	logs, err := rc.rdb.RPopCount(ctx, "audit_logs:pending", int(batchSize)).Result()
 	if err == redis.Nil || len(logs) == 0 {
 		// No logs to sync
+		metrics.AuditQueueLength.Set(0)
 		return nil
 	}
 	if err != nil {
@@ -100,6 +105,11 @@ func (rc *RedisCache) syncAuditLogsToPostgres(ctx context.Context) error {
 	}
 
 	log.Printf("🔄 Syncing %d audit logs from Redis to Postgres...", len(logs))
+	remaining := queueSize - int64(len(logs))
+	if remaining < 0 {
+		remaining = 0
+	}
+	metrics.AuditQueueLength.Set(float64(remaining))
 
 	// Parse all logs first
 	entries := make([]models.AuditLog, 0, len(logs))

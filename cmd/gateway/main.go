@@ -18,6 +18,7 @@ import (
 	"github.com/prompt-gateway/internal/audit"
 	"github.com/prompt-gateway/internal/cache"
 	"github.com/prompt-gateway/internal/config"
+	"github.com/prompt-gateway/internal/metrics"
 	"github.com/prompt-gateway/internal/policy"
 	"github.com/redis/go-redis/v9"
 )
@@ -45,8 +46,7 @@ func main() {
 	defer db.Close()
 
 	// Configure connection pool
-	// Similar to pool settings in asyncpg/SQLAlchemy
-	db.SetMaxOpenConns(cfg.DBMaxOpenConns) // Max connections from config
+	// 	db.SetMaxOpenConns(cfg.DBMaxOpenConns) // Max connections from config
 	db.SetMaxIdleConns(cfg.DBMaxIdleConns) // Idle connections from config
 	db.SetConnMaxLifetime(5 * time.Minute) // Connection lifetime
 
@@ -87,6 +87,9 @@ func main() {
 	defer policyCache.Stop()
 
 	analyzerSvc := analyzer.NewAnalyzer()
+
+	// Register Prometheus metrics once during startup
+	metrics.Register()
 
 	// Initialize Redis audit sync worker (Redis → Postgres for audit logs)
 	syncInterval := time.Duration(cfg.RedisSyncInterval) * time.Second

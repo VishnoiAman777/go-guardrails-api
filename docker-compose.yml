@@ -35,6 +35,26 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
 
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_URI: postgresql://postgres:postgres@db:5432/gateway?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  redis_exporter:
+    image: oliver006/redis_exporter:latest
+    command:
+      - '--redis.addr=redis:6379'
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   k6:
     image: grafana/k6
     volumes:

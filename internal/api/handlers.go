@@ -12,6 +12,7 @@ import (
 	"github.com/prompt-gateway/internal/analyzer"
 	"github.com/prompt-gateway/internal/audit"
 	"github.com/prompt-gateway/internal/cache"
+	"github.com/prompt-gateway/internal/metrics"
 	"github.com/prompt-gateway/internal/policy"
 	"github.com/prompt-gateway/pkg/models"
 )
@@ -78,6 +79,10 @@ func (h *Handler) HandleAnalyze(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "Analysis failed")
 		}
 		return
+	}
+
+	for _, match := range matches {
+		metrics.AnalyzerMatchesTotal.WithLabelValues(match.Severity).Inc()
 	}
 
 	// Determine action based on triggered policies
